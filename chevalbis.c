@@ -18,6 +18,7 @@ main( int nb_arg , char * tab_arg[] )
 
   int cle_piste ;
   piste_t * piste = NULL ;
+  int shm_piste_id ;
 
   int cle_liste ;
   liste_t * liste = NULL ;
@@ -82,6 +83,25 @@ main( int nb_arg , char * tab_arg[] )
   elem_etat_affecter(&elem_cheval , EN_COURSE ) ;
 
   /*
+   * Attachement de la piste en memoire partagee
+   */
+
+  shm_piste_id = shmget( cle_piste , sizeof(piste_t) , 0666 );
+  if( shm_piste_id == -1 )
+    {
+      fprintf( stderr, "%s : erreur attachement memoire partagee piste (cle=%d)\n" ,
+	       tab_arg[0]  , cle_piste );
+      exit(-3);
+    }
+
+  piste = (piste_t *) shmat( shm_piste_id , NULL , 0 );
+  if( piste == (piste_t *)-1 )
+    {
+      fprintf( stderr, "%s : erreur shmat piste\n" , tab_arg[0] );
+      exit(-4);
+    }
+
+  /*
    * Enregistrement du cheval dans la liste
    */
 
@@ -115,9 +135,31 @@ main( int nb_arg , char * tab_arg[] )
       /* Attente entre 2 coup de de */
       commun_attendre_tour() ;
 
-      /* 
-       * Verif si pas decanille 
+      /*
+       * Verif si pas decanille
        */
+
+      /* Recherche du cheval dans la liste */
+      int ind_cheval ;
+      if( liste_elem_rechercher( &ind_cheval , liste , elem_cheval ) == VRAI )
+      {
+        /* Lecture de l'element dans la liste pour verifier son etat */
+        elem_t elem_liste = liste_elem_lire( liste , ind_cheval );
+
+        /* Test si decanille */
+        if( elem_decanille( elem_liste ) == VRAI )
+          {
+            printf("Le cheval \"%c\" A ETE DECANILLE\n" , marque );
+            fini = VRAI ;
+            continue ; /* Sortie de la boucle */
+          }
+      }
+          else
+      {
+        fprintf( stderr , "%s : erreur, cheval \"%c\" non trouve dans la liste\n" ,
+          tab_arg[0] , marque );
+        exit(-6);
+      }
 
 
 
@@ -142,21 +184,48 @@ main( int nb_arg , char * tab_arg[] )
       if( depart != arrivee )
 	{
 
-	  /* 
-	   * Si case d'arrivee occupee alors on decanille le cheval existant 
+	  /*
+	   * Si case d'arrivee occupee alors on decanille le cheval existant
 	   */
 
-	       
-	  /* 
-	   * Deplacement: effacement case de depart, affectation case d'arrivee 
+	  if( piste_cell_occupee( piste , arrivee ) == VRAI )
+	    {
+	      /* Lecture de la cellule occupee */
+	      cell_t cell_victime ;
+	      piste_cell_lire( piste , arrivee , &cell_victime );
+
+	      /* Recherche du cheval victime dans la liste */
+	      elem_t elem_victime ;
+	      elem_cell_affecter( &elem_victime , cell_victime );
+	      elem_etat_affecter( &elem_victime , EN_COURSE ); /* Pour la recherche */
+
+	      int ind_victime ;
+	      if( liste_elem_rechercher( &ind_victime , liste , elem_victime ) == VRAI )
+		{
+		  /* Decaniller le cheval victime dans la liste */
+		  liste_elem_decaniller( liste , ind_victime );
+
+#ifdef _DEBUG_
+		  printf("Le cheval \"%c\" decanille le cheval \"%c\"\n",
+			 marque , cell_marque_lire(cell_victime) );
+#endif
+		}
+	    }
+
+	  /*
+	   * Deplacement: effacement case de depart, affectation case d'arrivee
 	   */
+
+	  piste_cell_effacer( piste , depart );
+	  commun_attendre_fin_saut();
+	  piste_cell_affecter( piste , arrivee , cell_cheval );
 
 #ifdef _DEBUG_
 	  printf("Deplacement du cheval \"%c\" de %d a %d\n",
 		 marque, depart, arrivee );
 #endif
 
-	  
+
 	} 
       /* Affichage de la piste  */
       piste_afficher_lig( piste );
@@ -168,10 +237,35 @@ main( int nb_arg , char * tab_arg[] )
 
  
      
-  /* 
-   * Suppression du cheval de la liste 
+  /*
+   * Suppression du cheval de la liste
    */
 
-  
+  /* Recherche du cheval dans la liste */
+  int ind_cheval_final ;
+  if( liste_elem_rechercher( &ind_cheval_final , liste , elem_cheval ) == VRAI )
+    {
+      /* Suppression du cheval de la liste */
+      if( liste_elem_supprimer( liste , ind_cheval_final ) != 0 )
+	{
+	  fprintf( stderr, "%s : erreur suppression cheval \"%c\" de la liste\n" ,
+		   tab_arg[0] , marque );
+	  exit(-7);
+	}
+#ifdef _DEBUG_
+      printf("Le cheval \"%c\" a ete supprime de la liste\n" , marque );
+#endif
+    }
+  else
+    {
+      fprintf( stderr , "%s : erreur, cheval \"%c\" non trouve dans la liste pour suppression\n" ,
+	       tab_arg[0] , marque );
+      exit(-8);
+    }
+
+  /* Detachement de la memoire partagee */
+  shmdt( piste );
+  shmdt( liste );
+
   exit(0);
 }
